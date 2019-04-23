@@ -40,6 +40,8 @@ $config = [
     'option1value'                  => 'Option 1 Value', //For products with only single option should be set to 'Default Title'
     'option2name'                   => 'Option 2 Name', //can be left blank
     'option2value'                  => 'Option 2 Value', //can be left blank
+    'option3name'                   => 'Option 3 Name', //can be left blank
+    'option3value'                  => 'Option 3 Value', //can be left blank
     'variant_sku'                   => 'Variant SKU',
     'variant_grams'                 => 'Variant Grams',
     'variant_inventory_tracker'     => 'Variant Inventory Tracker', //can be left blank    
@@ -84,7 +86,6 @@ function migration() {
     $tags_query= get_tags_query('_tag');
     $category_query= get_category_query('_cat');
     $image_query = get_image();
-    $options = get_options('_options');
     $variant_sku = get_variant_sku('_sku');
 
     $price = get_variants_query('_price');
@@ -101,7 +102,6 @@ function migration() {
             wpt_cat.name as category,
             GROUP_CONCAT(DISTINCT s.guid SEPARATOR ',') as product_image,
             wpp3.guid as variation_image,
-            GROUP_CONCAT(DISTINCT wptt_options.taxonomy, '=', wpt_options.slug SEPARATOR ',') as options,
             wppm_sku.meta_value as variant_sku,
             wppm{$price['slug']}.meta_value as variant_price,
             wppm{$tax['slug']}.meta_value as variant_taxable
@@ -113,8 +113,6 @@ function migration() {
         $category_query
 
         $image_query
-
-        $options
 
         $variant_sku
 
@@ -138,7 +136,6 @@ function migration() {
             'published' => $result->published === 'publish' ? 'true' : 'false',
             'image_src' => $result->product_image,
             'variation_img' => $result->variation_image,
-            'options' => $result->options,
             'variant_sku' => $result->variant_sku,
             'price' => $result->variant_price,
             'taxable' => $result->variant_taxable === 'taxable' ? 'true' : 'false'
@@ -269,8 +266,9 @@ function pm_init() {
 
     $products = migration();
     $product_variations = migration_variations();
-    pre_dump($products);
+    // pre_dump($products);
     $csv_arr = [];
+    pre_dump($product_variations);
 
     foreach ($config as $key => $value) {
         $csv_arr[0][] = $value;
@@ -288,6 +286,8 @@ function pm_init() {
         );
     }
 
+
+    echo '------------------------csv-------------------------';
     pre_dump($csv_arr);
     ?>
     <div class="wrap">
@@ -309,6 +309,7 @@ function migration_variations() {
     $regular_price_query = get_variants_query('_regular_price');
     $sale_price_query = get_variants_query('_sale_price');
     $tax_query = get_variants_query('_tax_status');
+    $options_query = get_variant_attributes('options');
 
     $results = $wpdb->get_results("
     SELECT
@@ -319,7 +320,9 @@ function migration_variations() {
         wppm{$price_query['slug']}.meta_value as variant_price,
         wppm{$regular_price_query['slug']}.meta_value as variant_regular_price,
         wppm{$sale_price_query['slug']}.meta_value as variant_sale_price,
-        wppm{$tax_query['slug']}.meta_value as variant_taxable
+        wppm{$tax_query['slug']}.meta_value as variant_taxable,
+        wppm{$options_query['slug']}.meta_key as options,
+        wppm{$options_query['slug']}.meta_value as options_value
     FROM
         wp_posts AS wpp
         
@@ -334,6 +337,8 @@ function migration_variations() {
     {$regular_price_query['query']}
 
     {$sale_price_query['query']}
+
+    {$options_query['query']}
         
     WHERE
         wpp.post_type = 'product_variation'
@@ -349,7 +354,9 @@ function migration_variations() {
             'variant_price' => $result->variant_price,
             'variant_regular_price' => $result->variant_regular_price,
             'variant_sale_price' => $result->variant_sale_price,
-            'variant_taxable' => $result->variant_taxable === 'taxable' ? 'true' : 'false'
+            'variant_taxable' => $result->variant_taxable === 'taxable' ? 'true' : 'false',
+            'options_name' => $result->options,
+            'options_value' => $result->options_value
         ];
     }
 
@@ -367,12 +374,24 @@ function get_variants_query($slug) {
             wppm$slug.post_id = wpp.ID AND wppm$slug.meta_key = '$slug'
     ";
 
-    return [
+    return array(
         'slug' => $slug,
         'query' => $query
-    ];
+    );
 }
 
+function get_variant_attributes($slug) {
+    $query = "
+    LEFT JOIN wp_postmeta AS wppm$slug
+    ON
+        wppm$slug.post_id = wpp.ID AND wppm$slug.meta_key LIKE 'attribute_pa%'
+    ";
+
+    return array(
+        'slug' => $slug,
+        'query' => $query
+    );
+}
 
 function create_csv_file($create_data, $file = null, $col_delimiter = ';', $row_delimiter = "\r\n") {
     
@@ -420,4 +439,17 @@ function create_csv_schema($config) {
     }
     array_push($data, $tmp);
     return $data;
+}
+
+function separate_options($string) {
+    $arr = explode(',', $string);
+
+    $options = [];
+    foreach($arr as $item) {
+        $str = explode('=', $item);
+        $key = trim($str[0], 'pa_');
+        @$options[$key][] = $str[1];
+    }
+
+    return $options;
 }
