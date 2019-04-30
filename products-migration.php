@@ -90,6 +90,7 @@ function migration() {
 
     $price = get_variants_query('_price');
     $tax = get_variants_query('_tax_status');
+    $product_type = get_product_type('_type');
 
     $results = $wpdb->get_results(
         "SELECT
@@ -104,7 +105,8 @@ function migration() {
             wpp3.guid as variation_image,
             wppm_sku.meta_value as variant_sku,
             wppm{$price['slug']}.meta_value as variant_price,
-            wppm{$tax['slug']}.meta_value as variant_taxable
+            wppm{$tax['slug']}.meta_value as variant_taxable,
+            wpt{$product_type['slug']}.name as product_type
         FROM
             wp_posts as wpp
 
@@ -119,9 +121,11 @@ function migration() {
         {$price['query']}
 
         {$tax['query']}
+
+        {$product_type['query']}
             
         WHERE 
-            wpp.post_type ='product' OR wpp.post_type = 'product_variation' 
+            wpp.post_type ='product'
         GROUP BY wpp.ID"
     );
 
@@ -138,7 +142,8 @@ function migration() {
             'variation_img' => $result->variation_image,
             'variant_sku' => $result->variant_sku,
             'price' => $result->variant_price,
-            'taxable' => $result->variant_taxable === 'taxable' ? 'true' : 'false'
+            'taxable' => $result->variant_taxable === 'taxable' ? 'true' : 'false',
+            'variable' => $result->product_type
         );
     }
     return $data;
@@ -258,6 +263,26 @@ function get_variant_sku($slug) {
 
     return $query;
 }
+
+function get_product_type($slug) {
+    $query = "
+    JOIN
+        wp_term_relationships as wptr{$slug}
+    ON
+        wptr{$slug}.object_id = wpp.ID
+
+    JOIN
+        wp_terms as wpt{$slug}
+    ON
+        wptr{$slug}.term_taxonomy_id = wpt{$slug}.term_id AND (wpt{$slug}.name = 'simple' OR wpt{$slug}.name = 'variable')
+    ";
+
+    return [
+        'slug' => $slug,
+        'query' => $query
+    ];
+}
+
 /**
  * Admin Page
  */
@@ -266,24 +291,96 @@ function pm_init() {
 
     $products = migration();
     $product_variations = migration_variations();
-    // pre_dump($products);
+    pre_dump($products);
+
+    //group attributes
+    $attrs = [];
+
+
+    function get_options_name($arr) {
+        $attrs = [];
+
+        //sort values by attribute name
+        foreach ($arr as $key => $attr) {
+            $attrs[str_replace('attribute_pa_', '', $attr['options_name'])][] = $attr['options_value'] ? $attr['options_value'] : 'Default Title';
+        }
+
+        return $attrs;
+    }
+
+    //
+    $options = get_options_name($product_variations);
+    $options_name = array_keys($options);
+    function add_all_variations($arr) {
+        foreach ($arr as $prodv) {
+            $tmp = $prodv['variation_id'];
+    
+            foreach($arr as $prodv2) {
+                if ($prodv2['variation_id'] === $tmp) {
+                    $prodv[] = [
+                        $prodv2['options_name'], $prodv2['options_value']
+                    ];
+                }
+            }
+        }
+        return $arr;
+    }
+    $new_vars = add_all_variations($product_variations);
+echo 'product variations------------------';
+    pre_dump($new_vars);
+    //---------csv
+
     $csv_arr = [];
-    pre_dump($product_variations);
 
     foreach ($config as $key => $value) {
         $csv_arr[0][] = $value;
     }
 
-    foreach($products as $key => $product) {
-        $csv_arr[] = array(
-            $product['handle'],
-            $product['title'],
-            $product['body'],
-            'vendor',
-            $product['type'],
-            $product['tags'],
-            $product['published']
-        );
+    foreach ($products as $product) {
+        
+
+
+        //check if product has variations
+        if ($product['variable'] === 'variable') {
+
+            foreach ($product_variations as $key => $prodv) {
+
+                if ($prodv['parent_post'] === $product['id']) {
+    
+                    $csv_arr[] = array(
+                        $product['handle'],
+                        $key == 0 ? $product['title'] : '',
+                        $key == 0 ? $product['body'] : '',
+                        $key == 0 ? 'vendor' : '',
+                        $key == 0 ? $product['type'] : '',
+                        $key == 0 ? $product['tags'] : '',
+                        $key == 0 ? $product['published'] : '',
+                        $prodv['options_name'],
+                        $prodv['options_value'],
+                    );
+    
+                } 
+            }
+        } else {
+            //simple product record
+            $csv_arr[] = [
+                $product['handle'],
+                $product['title'],
+                $product['body'],
+                'vendor',
+                $product['type'],
+                $product['tags'],
+                $product['published'],
+                'Title',
+                'Default Title',
+                '',
+                '',
+                '',
+                '',
+            ];
+        }
+        
+
     }
 
 
