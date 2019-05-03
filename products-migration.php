@@ -76,12 +76,14 @@ function pre_dump($vars, $printed = false, $hidden = false) {
     echo '</pre>';
 }
 
-//
-function migration() {
+//get all products from a database
+function get_products() {
 
     global $wpdb;
     
     $data = [];
+
+    //get query parts
 
     $tags_query= get_tags_query('_tag');
     $category_query= get_category_query('_cat');
@@ -150,7 +152,7 @@ function migration() {
 }
 
 /**
- * Query Parts
+ * Query Parts for products request
  */
 function get_tags_query($db_slug) {
     $query = "
@@ -289,46 +291,10 @@ function get_product_type($slug) {
 function pm_init() {
     global $config;
 
-    $products = migration();
-    $product_variations = migration_variations();
-    pre_dump($products);
+    $products = get_products();
+    $product_variations = get_product_variations();
 
-    //group attributes
-    $attrs = [];
-
-
-    function get_options_name($arr) {
-        $attrs = [];
-
-        //sort values by attribute name
-        foreach ($arr as $key => $attr) {
-            $attrs[str_replace('attribute_pa_', '', $attr['options_name'])][] = $attr['options_value'] ? $attr['options_value'] : 'Default Title';
-        }
-
-        return $attrs;
-    }
-
-    //
-    $options = get_options_name($product_variations);
-    $options_name = array_keys($options);
-    function add_all_variations($arr) {
-        foreach ($arr as $prodv) {
-            $tmp = $prodv['variation_id'];
-    
-            foreach($arr as $prodv2) {
-                if ($prodv2['variation_id'] === $tmp) {
-                    $prodv[] = [
-                        $prodv2['options_name'], $prodv2['options_value']
-                    ];
-                }
-            }
-        }
-        return $arr;
-    }
-    $new_vars = add_all_variations($product_variations);
-echo 'product variations------------------';
-    pre_dump($new_vars);
-    //---------csv
+    //csv array records
 
     $csv_arr = [];
 
@@ -337,29 +303,43 @@ echo 'product variations------------------';
     }
 
     foreach ($products as $product) {
-        
-
 
         //check if product has variations
         if ($product['variable'] === 'variable') {
 
-            foreach ($product_variations as $key => $prodv) {
+            # combine variations of one product to the temporary array
+            $tmp = [];
 
-                if ($prodv['parent_post'] === $product['id']) {
-    
+            foreach ($product_variations as $i => $product_variation) {
+                $tmp[] = $product_variations[$i];
+
+                if ($i < (count($product_variations) - 1) && $tmp[0]['variation_id'] === $product_variations[$i + 1]['variation_id']) {
+                    $tmp[] = $product_variations[$i + 1];
+                }
+
+                if ($product_variations[$i]['parent_post'] === $product['id']) {
+                    
+                    /**
+                     * all variations records
+                     */
                     $csv_arr[] = array(
                         $product['handle'],
-                        $key == 0 ? $product['title'] : '',
-                        $key == 0 ? $product['body'] : '',
-                        $key == 0 ? 'vendor' : '',
-                        $key == 0 ? $product['type'] : '',
-                        $key == 0 ? $product['tags'] : '',
-                        $key == 0 ? $product['published'] : '',
-                        $prodv['options_name'],
-                        $prodv['options_value'],
+                        $key === 0 ? $product['title'] : '',
+                        $key === 0 ? $product['body'] : '',
+                        $key === 0 ? 'vendor' : '',
+                        $key === 0 ? $product['type'] : '',
+                        $key === 0 ? $product['tags'] : '',
+                        $key === 0 ? $product['published'] : '',
+                        get_option_name($tmp, 0),
+                        get_option_value($tmp, 0),
+                        get_option_name($tmp, 1),
+                        get_option_value($tmp, 1),
+                        get_option_name($tmp, 2),
+                        get_option_value($tmp, 2),
                     );
     
-                } 
+                }
+                unset($tmp);
             }
         } else {
             //simple product record
@@ -382,10 +362,6 @@ echo 'product variations------------------';
         
 
     }
-
-
-    echo '------------------------csv-------------------------';
-    pre_dump($csv_arr);
     ?>
     <div class="wrap">
         <h1>Products Migration Info</h1>
@@ -393,12 +369,47 @@ echo 'product variations------------------';
     <?php
 }
 
+/**
+ * these functions should be dependent on each other. Returning values must be like this:
+ * 
+ *    [attribute_name] = $value | [second_attriubte_name] = $value | [third_attribute_name] = $value
+ * 
+ * 
+ * All those attributes are set on each product variation e.g.:
+ * product = Shoes.
+ * 
+ * Attributes to a variations would look like this:
+ * [attriubte_name] = Color
+ * [attribute_value] = Red
+ * 
+ * [second_attriubte_name] = Size
+ * [second_attriubte_value] = Small;
+ * 
+ * etc.
+ * By default shopify expect for you to have only 3 options(attriubtes);
+ * 
+ * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ should be reworked ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+ */
+
+//get option name of a product's variation
+function get_option_name($arr, $index) {
+
+    return str_replace('attribute_pa_', '', $arr[$index]['options_name']);
+}
+//get option value of a product's variation
+function get_option_value($arr, $index) {
+    return $arr[$index]['options_value'];
+}
 
 
-function migration_variations() {
+// get all products variations from a database
+
+function get_product_variations() {
     global $wpdb;
 
     $data = [];
+
+    // get query parts
 
     $sku_query = get_variants_query('_sku');
     $weight_query = get_variants_query('_weight');
@@ -457,12 +468,18 @@ function migration_variations() {
         ];
     }
 
+    /**
+     * csv file creation. should be replaced!
+     */
     create_csv_file($data, dirname(__FILE__) . DIRECTORY_SEPARATOR . 'csv_file.csv');
 
     return $data;
 
 }
 
+/**
+ * Query parts for product variations request
+ */
 function get_variants_query($slug) {
     $query = "
         LEFT JOIN
@@ -489,6 +506,7 @@ function get_variant_attributes($slug) {
         'query' => $query
     );
 }
+
 
 function create_csv_file($create_data, $file = null, $col_delimiter = ';', $row_delimiter = "\r\n") {
     
@@ -528,6 +546,7 @@ function create_csv_file($create_data, $file = null, $col_delimiter = ';', $row_
 
     return $CSV_str;
 }
+
 
 function create_csv_schema($config) {
     $data = [];
